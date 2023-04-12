@@ -1,61 +1,93 @@
+# Copyright 2023 Lucas Arbiza <lucas.arbiza@gmail.com>
+#
+# Returns the list of exchange rates of a given currency on the day before the
+# transaction date(s)
+#
+# USAGE:
+#   Run "python main.py -h" for up to date options
+
 import pandas
 import argparse
-import re
 from datetime import datetime
-
-
-def datetime_handler(dt: str, dt_dict: dict, tz: str = None, cvs_tz: str = None):
-
-    if dt_dict["yyyymmdd"].match(dt):
-        print("{} matches 'yyyymmdd'".format(dt))
-    elif dt_dict["dd_mm_yyyy"].match(dt):
-        print("{} matches 'dd_mm_yyyy'".format(dt))
-    elif dt_dict["yyyy_mm_dd_hh_mm_ss"].match(dt):
-        print("{} matches 'yyyy_mm_dd_hh_mm_ss'".format(dt))
-    elif dt_dict["iso_8601_date"].match(dt):
-        print("{} matches 'iso_8601_date'".format(dt))
-    elif dt_dict["iso_8601"].match(dt):
-        print("{} matches 'iso_8601'".format(dt))
+from dateutil import parser, tz
 
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(
+    arg_parser = argparse.ArgumentParser(
         description='Returns the exchange rate from the previous business day',
-        epilog='Project https://github.com/arbiza/exchange-rate-from-previous-day')
+        epilog='Project https://github.com/arbiza/exchange-rate-from-previous-day',
+        formatter_class=argparse.RawTextHelpFormatter)
 
-    parser.add_argument('-f', dest='cvs_file', type=str, nargs=1, required=True,
-                        help='Path to the CVS file with the exchange rates')
-    parser.add_argument('-c', dest='currency', type=str, nargs=1, required=True,
-                        help='Currency symbol as it appears in the CVS file (e.g.: USD,AUD,HKD,NZD,EUR,GBP)')
-    parser.add_argument('-d', dest='transaction_dates', type=str, nargs='+', required=True,
-                        help='List of transaction dates (e.g.: 2023-02-14 2023-03-30)')
-    parser.add_argument('-i', dest='index', type=str, nargs=1, required=True,
-                        help='Name of the \'date\' column')
-    parser.add_argument('--in-tz', dest='in_timezone', type=str, nargs=1, required=False,
-                        help='Timezone of the informed data')
-    parser.add_argument('--cvs-tz', dest='local_timezone', type=str, nargs=1, required=False,
-                        help='Timezone of the data in the CVS file')
+    arg_parser.add_argument('-f', dest='cvs_file', type=str, nargs=1, required=True,
+                            help='Path to the CVS file with the exchange rates')
+    arg_parser.add_argument('-c', dest='currency', type=str, nargs=1, required=True,
+                            help='Currency symbol as it appears in the CVS file (e.g.: USD,AUD,HKD,NZD,EUR,GBP)')
+    arg_parser.add_argument('-d', dest='transaction_dates', type=str, nargs='+', required=True,
+                            help='List of transaction dates\n'
+                                 'Accepted formats:\n'
+                                 ' - 2023-04-12T04:37:09+0200\n'
+                                 ' - 2023-04-12T04:39:01.700316129+0200\n'
+                                 ' - 20230412\n'
+                                 ' - 2023-04-12'
+                            )
+    arg_parser.add_argument('-i', dest='index', type=str, nargs=1, required=True,
+                            help='Name of the \'date\' column')
+    arg_parser.add_argument('--sep', type=str, nargs=1, required=False,
+                            help='CSV separator (default is \',\')')
+    arg_parser.add_argument('--tz', dest='in_tz', type=str, nargs=1, required=False,
+                            help='Timezone of the provided dates as in /usr/share/zoneinfo/')
+    arg_parser.add_argument('--cvs-tz', dest='cvs_tz', type=str, nargs=1, required=False,
+                            help='Timezone of the data in the CVS file as in /usr/share/zoneinfo/ (if not informed, it will use the local TZ)')
+    arg_parser.add_argument('--detail', type=bool, action=argparse.BooleanOptionalAction,
+                            help='for an detailed output')
 
-    args = parser.parse_args()
+    args = arg_parser.parse_args()
 
-    cvs_content = pandas.read_csv(
-        args.cvs_file[0], sep=';', encoding='ISO-8859-1', parse_dates=['data'])
-    # args.cvs_file[0], index_col=args.index[0], sep=';', encoding='ISO-8859-1', parse_dates=['data'])
+    df = pandas.read_csv(
+        args.cvs_file[0], sep=',' if args.sep is None else args.sep[0], encoding='ISO-8859-1')
 
-    dt_dict = {
-        "yyyymmdd": re.compile("^\d{8}$"),
-        "dd_mm_yyyy": re.compile("^\d{2}-\d{2}-\d{4}$"),
-        "yyyy_mm_dd_hh_mm_ss": re.compile("^\d{4} -\d{2} -\d{2} \d{2}: \d{2}: \d{2}$"),
-        "iso_8601_date": re.compile("^\d{4}-\d{2}-\d{2}$"),
-        "iso_8601": re.compile("^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|[Zz])$")
-    }
+    tz_cvs = tz.tzlocal() if args.cvs_tz is None else tz.gettz(args.cvs_tz[0])
+    tz_input = tz.tzlocal() if args.in_tz is None else tz.gettz(args.in_tz[0])
 
-    datetime_handler("2023-04-10", dt_dict)
-    datetime_handler("20230410", dt_dict)
-    datetime_handler("2022-01-03", dt_dict)
-    datetime_handler("03-01-2021", dt_dict)
-    datetime_handler("2022-01-04T05:10:42.960148Z", dt_dict)
-    datetime_handler("1994-11-05T08:15:30-05:00", dt_dict)
-    datetime_handler("1994-11-05T08:15:30.989412-05:00", dt_dict)
-    datetime_handler("1994-11-05T08:15:30.989412+05:00", dt_dict)
+    exchange_rates = list()
+
+    for i in range(len(df)):
+        try:
+            l = [
+                parser.parse(df.loc[i, args.index[0]]),
+                df.loc[i, args.currency[0]]
+            ]
+            # Inform the datetime object its timezone
+            l[0].replace(tzinfo=tz_cvs)
+            exchange_rates.append(l)
+        except:
+            pass
+
+    transaction_dates = [
+        d2.astimezone(tz_cvs) for d2 in [
+            parser.parse(d).replace(tzinfo=tz_input) for d in args.transaction_dates]]
+
+    exchange_rates.sort()
+    transaction_dates.sort()
+
+    exchange_rates = [[d[0].date(), d[1]] for d in exchange_rates]
+    transaction_dates = [d.date() for d in transaction_dates]
+
+    index_er = 0
+
+    for index_td in range(0, len(transaction_dates)):
+        while index_er < len(exchange_rates):
+            if transaction_dates[index_td] > exchange_rates[index_er][0]:
+                index_er += 1
+            else:
+                if args.detail:
+                    print(
+                        "Transaction date {} - Previous day {}      {}: {}".format(
+                            transaction_dates[index_td],
+                            exchange_rates[index_er-1][0],
+                            args.currency[0],
+                            exchange_rates[index_er-1][1]))
+                else:
+                    print(format(exchange_rates[index_er - 1][1]))
+                break
