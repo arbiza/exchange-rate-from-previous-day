@@ -86,7 +86,9 @@ if __name__ == "__main__":
             if td > df[date][j]:
                 j += 1
 
-            elif td < df[date][j]:
+            # Avoid wrong processing when the transaction date is before the
+            # first date in the file
+            elif td < df[date][0]:
                 break
 
             else:
