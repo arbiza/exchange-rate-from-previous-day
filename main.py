@@ -43,6 +43,8 @@ if __name__ == "__main__":
                             help='for an detailed output')
 
     args = arg_parser.parse_args()
+    date = args.index[0]
+    currency = args.currency[0]
 
     df = pandas.read_csv(
         args.cvs_file[0], sep=',' if args.sep is None else args.sep[0], encoding='ISO-8859-1')
@@ -50,44 +52,58 @@ if __name__ == "__main__":
     tz_cvs = tz.tzlocal() if args.cvs_tz is None else tz.gettz(args.cvs_tz[0])
     tz_input = tz.tzlocal() if args.in_tz is None else tz.gettz(args.in_tz[0])
 
-    exchange_rates = list()
+    # Reduces the dataframe and stay with the minimun
+    df = df[[date, currency]]
 
-    for i in range(len(df)):
+    not_a_date = list()
+
+    for index, row in df.iterrows():
         try:
-            l = [
-                parser.parse(df.loc[i, args.index[0]]),
-                df.loc[i, args.currency[0]]
-            ]
-            # Inform the datetime object its timezone
-            l[0].replace(tzinfo=tz_cvs)
-            exchange_rates.append(l)
+            d = parser.parse(row[date]).replace(tzinfo=tz_cvs)
+            row[date] = d.date()
         except:
+            not_a_date.append(index)
             pass
 
-    transaction_dates = [
+    # Remove any row which doesn't start with a date and reset the index
+    df = df.drop(not_a_date, axis=0)
+    df = df.sort_values(date)
+    df = df.reset_index(drop=True)
+
+    transactions = [
         d2.astimezone(tz_cvs) for d2 in [
             parser.parse(d).replace(tzinfo=tz_input) for d in args.transaction_dates]]
+    transactions = [d.date() for d in transactions]
 
-    exchange_rates.sort()
-    transaction_dates.sort()
+    transactions.sort()
 
-    exchange_rates = [[d[0].date(), d[1]] for d in exchange_rates]
-    transaction_dates = [d.date() for d in transaction_dates]
+    j = 0
+    found = list()
+    for td in transactions:
 
-    index_er = 0
+        while j < len(df[date]):
 
-    for index_td in range(0, len(transaction_dates)):
-        while index_er < len(exchange_rates):
-            if transaction_dates[index_td] > exchange_rates[index_er][0]:
-                index_er += 1
+            if td > df[date][j]:
+                j += 1
+
+            elif td < df[date][j]:
+                break
+
             else:
+                found.append(td)
                 if args.detail:
                     print(
                         "Transaction date {} - Previous day {}      {}: {}".format(
-                            transaction_dates[index_td],
-                            exchange_rates[index_er-1][0],
-                            args.currency[0],
-                            exchange_rates[index_er-1][1]))
+                            td,
+                            df[date][0 if j == 0 else j-1],
+                            currency,
+                            df[currency][0 if j == 0 else j-1]))
                 else:
-                    print(format(exchange_rates[index_er - 1][1]))
+                    print(format(df[currency][0 if j == 0 else j-1]))
                 break
+
+    [transactions.remove(f) for f in found]
+
+    print('\n' + '-' * 40 + '\n')
+    print("Transaction out of range of {}:\n".format(args.cvs_file[0]))
+    [print(" - {}".format(d)) for d in transactions]
